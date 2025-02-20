@@ -22,7 +22,6 @@ inline CURLcode CurlSetOpt_(struct Curl_easy* data, CURLoption option, ...)
 
 CURLcode __cdecl hk_curl_easy_setopt(struct Curl_easy* curl, CURLoption option, ...)
 {
-    std::cout << "[Hooked] curl_easy_setopt called" << std::endl;
 
     va_list args;
     va_start(args, option);
@@ -38,8 +37,6 @@ CURLcode __cdecl hk_curl_easy_setopt(struct Curl_easy* curl, CURLoption option, 
     {
         std::string url = va_arg(args, char*);
         Uri uri = Uri::Parse(url);
-
-        std::cout << "URL: " << uri.Host << uri.Path << '\n';
 
         if (uri.Host.ends_with("ol.epicgames.com") ||
             uri.Host.ends_with("epicgames.dev") ||
@@ -64,17 +61,26 @@ CURLcode __cdecl hk_curl_easy_setopt(struct Curl_easy* curl, CURLoption option, 
     return result;
 }
 
+CURLcode __cdecl hk_curl_setopt(struct Curl_easy* curl, CURLoption option, va_list args)
+{
+    return o_curl_setopt(curl, option, args);
+}
+
 DWORD WINAPI HookThread(LPVOID)
 {
     if (MH_Initialize() != MH_OK)
         return 1;
 
-    void* p_curl_easy_setopt = (void*)0x2090420;
+    __int64 Base = (__int64)GetModuleHandleA(0);
+    void* p_curl_easy_setopt = (void*)(Base + 0x2090420);
+    void* p_curl_setopt = (void*)(Base + 0x20992F0);
 
     MH_CreateHook(p_curl_easy_setopt, &hk_curl_easy_setopt, (LPVOID*)&o_curl_easy_setopt);
     MH_EnableHook(p_curl_easy_setopt);
 
-    std::cout << "Hooks installed successfully!" << std::endl;
+    MH_CreateHook(p_curl_setopt, &hk_curl_setopt, (LPVOID*)&o_curl_setopt);
+    MH_EnableHook(p_curl_setopt);
+
     return 0;
 }
 
