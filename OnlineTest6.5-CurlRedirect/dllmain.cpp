@@ -3,88 +3,101 @@
 #include "Minhook/include/MinHook.h"
 #include "globals.h"
 #include "Url.h"
-#include "curl.h"
 
-typedef CURLcode(__cdecl* t_curl_easy_setopt)(struct Curl_easy*, CURLoption, ...);
-typedef CURLcode(__cdecl* t_curl_setopt)(struct Curl_easy*, CURLoption, va_list);
-
+typedef int(__cdecl* t_curl_easy_setopt)(int curl_handle, int option, ...);
 t_curl_easy_setopt o_curl_easy_setopt = nullptr;
-t_curl_setopt o_curl_setopt = nullptr;
 
-inline CURLcode CurlSetOpt_(struct Curl_easy* data, CURLoption option, ...)
+int __cdecl hk_curl_easy_setopt(int curl_handle, int option, ...)
 {
-    va_list arg;
-    va_start(arg, option);
-    CURLcode result = o_curl_setopt(data, option, arg);
-    va_end(arg);
-    return result;
-}
-
-CURLcode __cdecl hk_curl_easy_setopt(struct Curl_easy* curl, CURLoption option, ...)
-{
+    if (!curl_handle) return 43;
 
     va_list args;
     va_start(args, option);
 
-    CURLcode result = {};
-    if (!curl) return CURLE_BAD_FUNCTION_ARGUMENT;
+    int result = 0;
 
-    if (option == CURLOPT_SSL_VERIFYPEER)
+    if (option == 81)
     {
-        result = CurlSetOpt_(curl, option, 0);
+        result = o_curl_easy_setopt(curl_handle, option, 0);
     }
-    else if (option == CURLOPT_URL)
+    else if (option == 10002)
     {
-        std::string url = va_arg(args, char*);
-        Uri uri = Uri::Parse(url);
-
-        if (uri.Host.ends_with("ol.epicgames.com") ||
-            uri.Host.ends_with("epicgames.dev") ||
-            uri.Host.ends_with("ol.epicgames.net") ||
-            uri.Host.ends_with(".akamaized.net") ||
-            uri.Host.ends_with("on.epicgames.com") ||
-            uri.Host.ends_with("game-social.epicgames.com") ||
-            uri.Host.contains("superawesome.com") ||
-            uri.Host.contains("ak.epicgames.com"))
+        char* url = va_arg(args, char*);
+        if (url)
         {
-            url = Uri::CreateUri(URL_PROTOCOL, URL_HOST, URL_PORT, uri.Path, uri.QueryString);
-        }
+            std::string url_str = url;
+            Uri uri = Uri::Parse(url_str);
 
-        result = CurlSetOpt_(curl, option, url.c_str());
+            if (uri.Host.ends_with("ol.epicgames.com") ||
+                uri.Host.ends_with("epicgames.dev") ||
+                uri.Host.ends_with("ol.epicgames.net") ||
+                uri.Host.ends_with(".akamaized.net") ||
+                uri.Host.ends_with("on.epicgames.com") ||
+                uri.Host.ends_with("game-social.epicgames.com") ||
+                uri.Host.contains("superawesome.com") ||
+                uri.Host.contains("ak.epicgames.com"))
+            {
+                std::string redirected_url = Uri::CreateUri(URL_PROTOCOL, URL_HOST, URL_PORT, uri.Path, uri.QueryString);
+
+                std::cout << "Redirecting: " << url << " -> " << redirected_url << std::endl;
+
+                result = o_curl_easy_setopt(curl_handle, option, redirected_url.c_str());
+            }
+            else
+            {
+                result = o_curl_easy_setopt(curl_handle, option, url);
+            }
+        }
+        else
+        {
+            result = o_curl_easy_setopt(curl_handle, option, url);
+        }
     }
     else
     {
-        result = CurlSetOpt_(curl, option, args);
+        void* arg = va_arg(args, void*);
+        result = o_curl_easy_setopt(curl_handle, option, arg);
     }
 
     va_end(args);
     return result;
 }
 
-CURLcode __cdecl hk_curl_setopt(struct Curl_easy* curl, CURLoption option, va_list args)
-{
-    return o_curl_setopt(curl, option, args);
-}
-
 DWORD WINAPI HookThread(LPVOID)
 {
+    AllocConsole();
+    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+
     if (MH_Initialize() != MH_OK)
+    {
+        std::cout << "Failed to initialize MinHook" << std::endl;
         return 1;
+    }
 
-    __int64 Base = (__int64)GetModuleHandleA(0);
+    std::cout << "OT6 Redirect by ApfelTeeSaft" << std::endl;
+
+    uintptr_t Base = (uintptr_t)GetModuleHandleA(0);
     void* p_curl_easy_setopt = (void*)(Base + 0x2090420);
-    void* p_curl_setopt = (void*)(Base + 0x20992F0);
 
-    MH_CreateHook(p_curl_easy_setopt, &hk_curl_easy_setopt, (LPVOID*)&o_curl_easy_setopt);
-    MH_EnableHook(p_curl_easy_setopt);
+    std::cout << "Hooking curl_easy_setopt at: 0x" << std::hex << p_curl_easy_setopt << std::endl;
 
-    MH_CreateHook(p_curl_setopt, &hk_curl_setopt, (LPVOID*)&o_curl_setopt);
-    MH_EnableHook(p_curl_setopt);
+    if (MH_CreateHook(p_curl_easy_setopt, &hk_curl_easy_setopt, (LPVOID*)&o_curl_easy_setopt) != MH_OK)
+    {
+        std::cout << "Failed to create hook" << std::endl;
+        return 1;
+    }
 
+    if (MH_EnableHook(p_curl_easy_setopt) != MH_OK)
+    {
+        std::cout << "Failed to enable hook" << std::endl;
+        return 1;
+    }
+
+    std::cout << "Hook installed successfully!" << std::endl;
     return 0;
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD  ul_reason_for_call, LPVOID lpReserved)
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH)
     {
